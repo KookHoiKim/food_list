@@ -1,0 +1,1 @@
+"""Inventory uploader application package."""
