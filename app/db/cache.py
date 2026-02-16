@@ -13,15 +13,16 @@ def init_db() -> None:
     with sqlite3.connect(settings.sqlite_path) as conn:
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS processed_uploads (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                image_hash TEXT UNIQUE NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            CREATE TABLE IF NOT EXISTS uploads (
+                hash TEXT PRIMARY KEY,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                original_filename TEXT,
+                size_bytes INTEGER NOT NULL
             )
             """
         )
         conn.commit()
-    logger.info("SQLite cache initialized at %s", settings.sqlite_path)
+    logger.info("SQLite uploads table initialized at %s", settings.sqlite_path)
 
 
 @contextmanager
@@ -34,20 +35,22 @@ def get_connection() -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-def is_hash_processed(image_hash: str) -> bool:
+def is_hash_processed(file_hash: str) -> bool:
     with get_connection() as conn:
-        cursor = conn.execute(
-            "SELECT 1 FROM processed_uploads WHERE image_hash = ? LIMIT 1", (image_hash,)
-        )
+        cursor = conn.execute("SELECT 1 FROM uploads WHERE hash = ? LIMIT 1", (file_hash,))
         exists = cursor.fetchone() is not None
-    logger.info("Hash %s processed: %s", image_hash, exists)
+    logger.info("Hash %s exists: %s", file_hash, exists)
     return exists
 
 
-def save_processed_hash(image_hash: str) -> None:
+def save_upload(file_hash: str, original_filename: str | None, size_bytes: int) -> None:
     with get_connection() as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO processed_uploads(image_hash) VALUES (?)", (image_hash,)
+            """
+            INSERT INTO uploads(hash, original_filename, size_bytes)
+            VALUES (?, ?, ?)
+            """,
+            (file_hash, original_filename, size_bytes),
         )
         conn.commit()
-    logger.info("Saved processed hash %s", image_hash)
+    logger.info("Saved upload record %s", file_hash)
