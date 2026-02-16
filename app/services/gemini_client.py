@@ -1,12 +1,14 @@
 import base64
 import json
 import logging
+from datetime import date
 from typing import Any
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, RootModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, RootModel, ValidationError, model_validator
 
 from app.core.config import get_settings
+from app.services.normalize import categorize_item, estimate_expiry, normalize_name
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +22,26 @@ class Item(BaseModel):
     qty: float | None = Field(default=None, description="수량")
     unit: str | None = Field(default=None, description="단위")
     confidence: float = Field(ge=0.0, le=1.0, description="신뢰도(0~1)")
+    name_norm: str = Field(default="", description="정규화된 상품명")
+    category: str = Field(default="other", description="카테고리")
+    storage: str = Field(default="실온", description="보관 위치")
+    default_days: int = Field(default=7, ge=1, description="기본 보관일")
+    purchase_date: date = Field(default_factory=date.today, description="구매일(서버 처리 시각 기준)")
+    expiry_estimated: date | None = Field(default=None, description="예상 소비기한")
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def apply_postprocess(self) -> "Item":
+        name_norm = normalize_name(self.name_raw)
+        category, storage, default_days = categorize_item(self.name_raw, name_norm)
+
+        self.name_norm = name_norm
+        self.category = category
+        self.storage = storage
+        self.default_days = default_days
+        self.expiry_estimated = estimate_expiry(self.purchase_date, self.default_days)
+        return self
 
 
 class ItemListResponse(RootModel[list[Item]]):
