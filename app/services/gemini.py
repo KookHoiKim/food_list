@@ -5,6 +5,7 @@ import logging
 import httpx
 
 from app.core.config import get_settings
+from app.core.metrics import metrics_tracker
 from app.models.inventory import InventoryExtraction
 from app.utils.schema_validation import validate_inventory_json
 
@@ -22,6 +23,14 @@ def build_prompt() -> str:
 
 async def extract_inventory_from_image(image_bytes: bytes, mime_type: str) -> InventoryExtraction:
     settings = get_settings()
+    if len(image_bytes) > settings.gemini_inline_max_bytes:
+        logger.warning(
+            "Image is %d bytes and exceeds inline threshold %d. TODO: migrate to Gemini File API flow.",
+            len(image_bytes),
+            settings.gemini_inline_max_bytes,
+        )
+        raise ValueError("Image exceeds inline upload threshold; File API flow is required")
+
     image_base64 = base64.b64encode(image_bytes).decode("utf-8")
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
@@ -40,6 +49,7 @@ async def extract_inventory_from_image(image_bytes: bytes, mime_type: str) -> In
     }
 
     logger.info("Calling Gemini API for extraction")
+    metrics_tracker.record_gemini_call()
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(url, json=payload)
         response.raise_for_status()

@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api import routes
+from app.core.metrics import metrics_tracker
 from app.models.inventory import InventoryExtraction, InventoryItem
 
 
@@ -26,7 +27,13 @@ def _mock_settings() -> SimpleNamespace:
     return SimpleNamespace(spreadsheet_id="sheet-123", sheet_name="Fridge", upload_token="secret-token")
 
 
+
+
+def _reset_metrics() -> None:
+    metrics_tracker.reset()
+
 def test_upload_requires_token(monkeypatch) -> None:
+    _reset_metrics()
     monkeypatch.setattr(routes, "get_settings", _mock_settings)
 
     client = _build_test_client()
@@ -39,6 +46,7 @@ def test_upload_requires_token(monkeypatch) -> None:
 
 
 def test_upload_runs_full_pipeline(monkeypatch) -> None:
+    _reset_metrics()
     monkeypatch.setattr(routes, "get_settings", _mock_settings)
     monkeypatch.setattr(routes, "calculate_image_hash", lambda _: "abc123")
     monkeypatch.setattr(routes, "is_hash_processed", lambda _: False)
@@ -78,6 +86,7 @@ def test_upload_runs_full_pipeline(monkeypatch) -> None:
 
 
 def test_upload_duplicate_skips_pipeline(monkeypatch) -> None:
+    _reset_metrics()
     monkeypatch.setattr(routes, "get_settings", _mock_settings)
     monkeypatch.setattr(routes, "calculate_image_hash", lambda _: "dup-hash")
     monkeypatch.setattr(routes, "is_hash_processed", lambda _: True)
@@ -103,6 +112,7 @@ def test_upload_duplicate_skips_pipeline(monkeypatch) -> None:
 
 
 def test_upload_returns_stage_on_gemini_failure(monkeypatch) -> None:
+    _reset_metrics()
     monkeypatch.setattr(routes, "get_settings", _mock_settings)
     monkeypatch.setattr(routes, "calculate_image_hash", lambda _: "abc123")
     monkeypatch.setattr(routes, "is_hash_processed", lambda _: False)
@@ -127,9 +137,68 @@ def test_upload_returns_stage_on_gemini_failure(monkeypatch) -> None:
 
 
 def test_web_page_served() -> None:
+    _reset_metrics()
     client = _build_test_client()
     response = client.get("/web")
 
     assert response.status_code == 200
     assert "이미지 업로드" in response.text
     assert "X-Upload-Token" in response.text
+
+
+def test_metrics_endpoint_reports_counts(monkeypatch) -> None:
+    _reset_metrics()
+    monkeypatch.setattr(routes, "get_settings", _mock_settings)
+    monkeypatch.setattr(routes, "calculate_image_hash", lambda _: "abc123")
+    monkeypatch.setattr(routes, "is_hash_processed", lambda _: False)
+    monkeypatch.setattr(routes, "save_upload", lambda **_: None)
+
+    extraction = InventoryExtraction(items=[InventoryItem(name="우유", quantity=1, unit="개")])
+
+    async def _fake_extract_inventory_from_image(*, image_bytes: bytes, mime_type: str):
+        return extraction
+
+    monkeypatch.setattr(routes, "extract_inventory_from_image", _fake_extract_inventory_from_image)
+    fake_sheets = _FakeSheetsClient()
+    monkeypatch.setattr(routes, "SheetsClient", lambda: fake_sheets)
+
+    client = _build_test_client()
+    upload_response = client.post(
+        "/upload",
+        headers={"X-Upload-Token": "secret-token"},
+        files={"file": ("sample.jpg", b"\xff\xd8\xffdummy", "image/jpeg")},
+    )
+    assert upload_response.status_code == 200
+
+    metrics_response = client.get("/metrics")
+    assert metrics_response.status_code == 200
+    metrics = metrics_response.json()
+    assert metrics["total_uploads"] == 1
+    assert metrics["duplicates"] == 0
+    assert metrics["sheets_append_success"] == 1
+
+
+def test_upload_large_image_skips_gemini_call(monkeypatch) -> None:
+    _reset_metrics()
+    monkeypatch.setattr(routes, "get_settings", lambda: SimpleNamespace(
+        spreadsheet_id="sheet-123",
+        sheet_name="Fridge",
+        upload_token="secret-token",
+        gemini_inline_max_bytes=4,
+    ))
+    monkeypatch.setattr(routes, "calculate_image_hash", lambda _: "abc123")
+    monkeypatch.setattr(routes, "is_hash_processed", lambda _: False)
+    monkeypatch.setattr(routes, "save_upload", lambda **_: None)
+
+    client = _build_test_client()
+    response = client.post(
+        "/upload",
+        headers={"X-Upload-Token": "secret-token"},
+        files={"file": ("sample.jpg", b"12345", "image/jpeg")},
+    )
+
+    assert response.status_code == 502
+    body = response.json()
+    assert body["stage"] == "gemini_extract"
+    metrics = client.get("/metrics").json()
+    assert metrics["gemini_calls"] == 0
