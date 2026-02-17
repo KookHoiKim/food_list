@@ -1,12 +1,12 @@
 # Food List Uploader
 
-이미지 파일을 업로드하면 SHA256 해시 기반으로 중복을 판별하고, 처음 업로드된 파일만 로컬 저장 및 SQLite에 기록하는 FastAPI 프로젝트입니다.
+이미지 파일 업로드 후 SHA256 해시 기반 중복 판별, Gemini 품목 추출, 정규화/카테고리/예상소비기한 계산, Google Sheets 적재까지 한 번에 수행하는 FastAPI 프로젝트입니다.
 
 ## 구조
 
 ```text
 app/
-  api/routes.py            # 라우팅 (/health, /upload)
+  api/routes.py            # 라우팅 (/health, /upload 통합 파이프라인)
   core/config.py           # .env 기반 설정
   core/logging_config.py   # 로깅 설정
   db/cache.py              # SQLite 초기화/업로드 메타데이터 저장
@@ -58,7 +58,8 @@ curl -X GET "http://127.0.0.1:8000/health"
 - 필드명: `file`
 - 지원 포맷: `image/jpeg`, `image/png`
 - 업로드 크기 제한: 최대 10MB
-- 중복(hash 존재) 시 파이프라인 스킵 후 `duplicate: true` 반환
+- 처리 단계: `해시/저장 -> Gemini 추출 -> 정규화/카테고리/expiry_estimated 계산 -> Google Sheets append`
+- 단계별 처리 시간 로그와 전체 `processing_seconds`를 응답에 포함
 
 #### 업로드 예시
 
@@ -73,7 +74,11 @@ curl -X POST "http://127.0.0.1:8000/upload" \
 ```json
 {
   "duplicate": true,
-  "hash": "<sha256>"
+  "num_items_extracted": 0,
+  "num_rows_appended": 0,
+  "sheet": {"spreadsheet_id": "<id>", "sheet_name": "Fridge"},
+  "items_preview": [],
+  "processing_seconds": 0.012
 }
 ```
 
@@ -82,19 +87,42 @@ curl -X POST "http://127.0.0.1:8000/upload" \
 ```json
 {
   "duplicate": false,
-  "hash": "<sha256>",
-  "saved_path": "data/uploads/<sha256>.jpg",
-  "size_bytes": 12345
+  "num_items_extracted": 4,
+  "num_rows_appended": 4,
+  "sheet": {"spreadsheet_id": "<id>", "sheet_name": "Fridge"},
+  "items_preview": [
+    {
+      "name_raw": "우유 1L",
+      "name_norm": "우유",
+      "qty": 1,
+      "unit": "개",
+      "category": "dairy",
+      "storage": "냉장",
+      "expiry_estimated": "2025-01-17"
+    }
+  ],
+  "processing_seconds": 1.274
 }
 ```
 
-#### 크기 제한 초과 예시
+#### 실패 응답(stage 포함) 예시
 
 ```json
 {
-  "detail": "File size exceeds limit (10MB)"
+  "stage": "validate_input",
+  "message": "Only JPG and PNG files are supported",
+  "processing_seconds": 0.003
 }
 ```
+
+실패 시 가능한 `stage` 값:
+
+- `validate_input`
+- `hash_and_save`
+- `gemini_extract`
+- `normalize_items`
+- `append_sheet`
+- `unknown`
 
 ## Google Sheets 저장(서비스 계정)
 
