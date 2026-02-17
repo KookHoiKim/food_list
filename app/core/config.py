@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     )
     sqlite_path: str = Field(default="./inventory_cache.db", alias="SQLITE_PATH")
     sheet_name: str = Field(default="Fridge", alias="SHEET_NAME")
+    upload_token: str = Field(alias="UPLOAD_TOKEN")
 
     model_config = SettingsConfigDict(case_sensitive=False, extra="ignore")
 
