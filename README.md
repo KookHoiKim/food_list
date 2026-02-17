@@ -6,7 +6,7 @@
 
 ```text
 app/
-  api/routes.py            # 라우팅 (/health, /upload, /web)
+  api/routes.py            # 라우팅 (/health, /metrics, /upload, /web)
   core/config.py           # .env 기반 설정
   core/logging_config.py   # 로깅 설정
   db/cache.py              # SQLite 초기화/업로드 메타데이터 저장
@@ -50,6 +50,27 @@ curl -X GET "http://127.0.0.1:8000/health"
 
 ```json
 {"status":"ok"}
+```
+
+### `GET /metrics`
+
+운영 관측을 위한 간단한 JSON 지표를 제공합니다.
+
+```bash
+curl -X GET "http://127.0.0.1:8000/metrics"
+```
+
+응답 예시:
+
+```json
+{
+  "total_uploads": 120,
+  "duplicates": 18,
+  "gemini_calls": 95,
+  "sheets_append_success": 94,
+  "sheets_append_failure": 1,
+  "avg_processing_seconds": 1.327
+}
 ```
 
 ### `GET /web`
@@ -225,3 +246,24 @@ client.append_rows(rows, lookback_rows=200)
 팁:
 - 서버가 사설망에 있다면 iPhone에서 같은 네트워크/VPN에 연결되어야 합니다.
 - 보안을 위해 `UPLOAD_TOKEN`은 길고 추측 어려운 문자열로 설정하세요.
+
+## 운영/보안/비용 가이드
+
+### 운영(Observability)
+- `/metrics`에서 업로드/중복/Gemini 호출/Sheets append 성공·실패/평균 처리시간을 확인할 수 있습니다.
+- 앱 시작 시 이미지 보관 정책 정리 작업이 1회 실행되며, 이후 **하루 1회** 자동 실행됩니다(APScheduler interval).
+
+### 보안/프라이버시(이미지 자동 삭제)
+- 업로드 이미지는 `IMAGE_RETENTION_DAYS`(기본값 `7`) 기준으로 자동 정리됩니다.
+- 정리 시 업로드 파일(`data/uploads/{hash}.jpg|png`)과 SQLite `uploads` 메타데이터를 함께 삭제합니다.
+- 스케줄러를 쓰지 않는 환경(예: 서버리스/단일 스크립트 실행)에서는 cron으로 `cleanup_old_uploads()`에 해당하는 배치 실행을 권장합니다.
+
+### 비용(Gemini 호출 제어)
+- 중복 업로드는 Gemini 호출을 하지 않습니다.
+- 신규 업로드라도 이미지가 `GEMINI_INLINE_MAX_BYTES`(기본 4MB)를 초과하면 인라인 전송 대신 실패 처리하고 경고 로그를 남깁니다.
+- 4MB 초과 로그에는 `TODO: Gemini File API` 전환 필요 메시지가 포함됩니다.
+
+### 신규 환경변수
+- `IMAGE_RETENTION_DAYS=7`
+- `GEMINI_INLINE_MAX_BYTES=4194304`
+

@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     sqlite_path: str = Field(default="./inventory_cache.db", alias="SQLITE_PATH")
     sheet_name: str = Field(default="Fridge", alias="SHEET_NAME")
     upload_token: str = Field(alias="UPLOAD_TOKEN")
+    image_retention_days: int = Field(default=7, alias="IMAGE_RETENTION_DAYS")
+    gemini_inline_max_bytes: int = Field(default=4 * 1024 * 1024, alias="GEMINI_INLINE_MAX_BYTES")
 
     model_config = SettingsConfigDict(case_sensitive=False, extra="ignore")
 

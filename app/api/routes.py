@@ -8,6 +8,7 @@ from fastapi import APIRouter, File, Header, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.core.config import get_settings
+from app.core.metrics import metrics_tracker
 from app.db.cache import is_hash_processed, save_upload
 from app.services.gemini import extract_inventory_from_image
 from app.services.normalize import categorize_item, estimate_expiry, normalize_name
@@ -34,6 +35,11 @@ class PipelineStageError(Exception):
 @router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get("/metrics")
+def metrics() -> dict[str, float | int]:
+    return metrics_tracker.snapshot()
 
 
 @router.get("/web", response_class=HTMLResponse)
@@ -180,6 +186,7 @@ async def upload_inventory_image(
         if is_duplicate:
             elapsed = time.perf_counter() - started_at
             logger.info("Duplicate upload detected: %s", file_hash)
+            metrics_tracker.record_upload(processing_seconds=elapsed, duplicate=True)
             return {
                 "duplicate": True,
                 "num_items_extracted": 0,
@@ -249,11 +256,14 @@ async def upload_inventory_image(
         try:
             sheets_client = SheetsClient()
             num_rows_appended = sheets_client.append_rows(rows_to_append)
+            metrics_tracker.record_sheets_append(success=True)
         except Exception as exc:  # noqa: BLE001
+            metrics_tracker.record_sheets_append(success=False)
             raise PipelineStageError(stage="append_sheet", status_code=502, message=str(exc)) from exc
         logger.info("[stage=append_sheet] done in %.3fs", time.perf_counter() - sheets_started)
 
         elapsed = time.perf_counter() - started_at
+        metrics_tracker.record_upload(processing_seconds=elapsed, duplicate=False)
         return {
             "duplicate": False,
             "num_items_extracted": len(extraction.items),
@@ -267,6 +277,7 @@ async def upload_inventory_image(
         }
     except PipelineStageError as exc:
         elapsed = time.perf_counter() - started_at
+        metrics_tracker.record_upload(processing_seconds=elapsed, duplicate=False)
         logger.exception("Upload pipeline failed at stage=%s", exc.stage)
         return JSONResponse(
             status_code=exc.status_code,
@@ -280,6 +291,7 @@ async def upload_inventory_image(
         raise
     except Exception as exc:  # noqa: BLE001
         elapsed = time.perf_counter() - started_at
+        metrics_tracker.record_upload(processing_seconds=elapsed, duplicate=False)
         logger.exception("Upload pipeline failed at unknown stage")
         return JSONResponse(
             status_code=500,

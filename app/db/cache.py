@@ -1,6 +1,8 @@
 import logging
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Iterator
 
 from app.core.config import get_settings
@@ -54,3 +56,34 @@ def save_upload(file_hash: str, original_filename: str | None, size_bytes: int) 
         )
         conn.commit()
     logger.info("Saved upload record %s", file_hash)
+
+
+def delete_uploads_older_than(days: int, upload_dir: Path) -> int:
+    if days <= 0:
+        return 0
+
+    cutoff = datetime.now() - timedelta(days=days)
+    cutoff_text = cutoff.strftime("%Y-%m-%d %H:%M:%S")
+
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT hash FROM uploads WHERE created_at < ?",
+            (cutoff_text,),
+        ).fetchall()
+
+        if not rows:
+            return 0
+
+        deleted = 0
+        for (file_hash,) in rows:
+            for extension in (".jpg", ".png"):
+                file_path = upload_dir / f"{file_hash}{extension}"
+                if file_path.exists():
+                    file_path.unlink()
+            conn.execute("DELETE FROM uploads WHERE hash = ?", (file_hash,))
+            deleted += 1
+
+        conn.commit()
+
+    logger.info("Deleted %d uploads older than %d days", deleted, days)
+    return deleted
