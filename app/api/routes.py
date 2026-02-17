@@ -4,8 +4,8 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, File, Header, HTTPException, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.core.config import get_settings
 from app.db.cache import is_hash_processed, save_upload
@@ -36,10 +36,110 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@router.get("/web", response_class=HTMLResponse)
+def upload_web_page() -> str:
+    return """<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Food List 업로드</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; margin: 24px auto; max-width: 640px; padding: 0 16px; }
+    h1 { font-size: 1.4rem; margin-bottom: 16px; }
+    .field { margin-bottom: 12px; }
+    label { display: block; font-weight: 600; margin-bottom: 6px; }
+    input, button { width: 100%; font-size: 16px; padding: 12px; box-sizing: border-box; }
+    button { cursor: pointer; }
+    pre { white-space: pre-wrap; word-break: break-word; background: #f5f5f5; padding: 12px; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <h1>이미지 업로드</h1>
+  <div class="field">
+    <label for="token">업로드 토큰 (X-Upload-Token)</label>
+    <input id="token" type="password" placeholder="토큰 입력" autocomplete="off" />
+  </div>
+  <div class="field">
+    <label for="file">이미지 파일</label>
+    <input id="file" type="file" accept="image/jpeg,image/png" />
+  </div>
+  <div class="field">
+    <button id="submit">업로드</button>
+  </div>
+  <div id="result"></div>
+
+  <script>
+    const button = document.getElementById('submit');
+    const result = document.getElementById('result');
+
+    button.addEventListener('click', async () => {
+      const token = document.getElementById('token').value.trim();
+      const fileInput = document.getElementById('file');
+      const file = fileInput.files && fileInput.files[0];
+
+      if (!token) {
+        result.innerHTML = '<p>토큰을 입력하세요.</p>';
+        return;
+      }
+      if (!file) {
+        result.innerHTML = '<p>파일을 선택하세요.</p>';
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      button.disabled = true;
+      result.innerHTML = '<p>업로드 중...</p>';
+
+      try {
+        const response = await fetch('/upload', {
+          method: 'POST',
+          headers: { 'X-Upload-Token': token },
+          body: formData,
+        });
+
+        const body = await response.json();
+
+        if (!response.ok) {
+          result.innerHTML = `<h2>업로드 실패 (${response.status})</h2><pre>${JSON.stringify(body, null, 2)}</pre>`;
+          return;
+        }
+
+        const sheetLink = `https://docs.google.com/spreadsheets/d/${body.sheet.spreadsheet_id}`;
+        result.innerHTML = `
+          <h2>업로드 성공</h2>
+          <p>추출 품목 수: ${body.num_items_extracted}</p>
+          <p>추가 행 수: ${body.num_rows_appended}</p>
+          <p>시트 링크: <a href="${sheetLink}" target="_blank" rel="noreferrer">${sheetLink}</a></p>
+          <h3>추출 품목 프리뷰</h3>
+          <pre>${JSON.stringify(body.items_preview, null, 2)}</pre>
+        `;
+      } catch (error) {
+        result.innerHTML = `<h2>요청 오류</h2><pre>${String(error)}</pre>`;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>"""
+
+
+def _validate_upload_token(x_upload_token: str | None, expected_token: str) -> None:
+    if not x_upload_token or x_upload_token != expected_token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
 @router.post("/upload")
-async def upload_inventory_image(file: UploadFile = File(...)) -> dict[str, object]:
+async def upload_inventory_image(
+    file: UploadFile = File(...),
+    x_upload_token: str | None = Header(default=None, alias="X-Upload-Token"),
+) -> dict[str, object]:
     started_at = time.perf_counter()
     settings = get_settings()
+    _validate_upload_token(x_upload_token, settings.upload_token)
 
     try:
         validation_started = time.perf_counter()

@@ -6,7 +6,7 @@
 
 ```text
 app/
-  api/routes.py            # 라우팅 (/health, /upload 통합 파이프라인)
+  api/routes.py            # 라우팅 (/health, /upload, /web)
   core/config.py           # .env 기반 설정
   core/logging_config.py   # 로깅 설정
   db/cache.py              # SQLite 초기화/업로드 메타데이터 저장
@@ -52,12 +52,25 @@ curl -X GET "http://127.0.0.1:8000/health"
 {"status":"ok"}
 ```
 
+### `GET /web`
+
+모바일 업로드 테스트를 위한 간단한 HTML 페이지입니다.
+
+- 토큰 입력(`X-Upload-Token`)
+- 이미지 선택 후 업로드 버튼
+- 업로드 결과: 추출 품목 프리뷰 + 구글 시트 링크 표시
+
+```bash
+curl -X GET "http://127.0.0.1:8000/web"
+```
+
 ### `POST /upload`
 
 - 요청 타입: `multipart/form-data`
 - 필드명: `file`
 - 지원 포맷: `image/jpeg`, `image/png`
 - 업로드 크기 제한: 최대 10MB
+- 인증: 헤더 `X-Upload-Token` 필수 (값은 `.env`의 `UPLOAD_TOKEN`)
 - 처리 단계: `해시/저장 -> Gemini 추출 -> 정규화/카테고리/expiry_estimated 계산 -> Google Sheets append`
 - 단계별 처리 시간 로그와 전체 `processing_seconds`를 응답에 포함
 
@@ -66,6 +79,7 @@ curl -X GET "http://127.0.0.1:8000/health"
 ```bash
 curl -X POST "http://127.0.0.1:8000/upload" \
   -H "accept: application/json" \
+  -H "X-Upload-Token: ${UPLOAD_TOKEN}" \
   -F "file=@/path/to/image.jpg;type=image/jpeg"
 ```
 
@@ -133,6 +147,7 @@ curl -X POST "http://127.0.0.1:8000/upload" \
 - `SPREADSHEET_ID`: 대상 스프레드시트 ID
 - `SHEET_NAME`: 시트 이름 (기본값 `Fridge`)
 - `GOOGLE_CREDENTIALS_JSON`: 서비스 계정 JSON 문자열 또는 JSON 파일 경로
+- `UPLOAD_TOKEN`: `/upload` 요청 인증용 토큰 (`X-Upload-Token` 헤더)
 
 > 하위 호환: 기존 `GOOGLE_SHEET_ID`도 `SPREADSHEET_ID` 대신 사용할 수 있습니다.
 
@@ -181,3 +196,32 @@ client.append_rows(rows, lookback_rows=200)
 - `has_hash_recently(source_hash, lookback_rows=200)`: 최근 N행에서 `source_hash` 중복 여부를 확인합니다.
 - `append_rows(...)`: `values.append` + `valueInputOption=USER_ENTERED`로 행을 추가하며,
   중복 해시는 자동 스킵합니다.
+
+## iOS 단축어: 공유 → 서버 업로드 구성 방법
+
+아래 순서로 iPhone 기본 **단축어(Shortcuts)** 앱에서 구성하면, 사진 공유 시 서버로 바로 업로드할 수 있습니다.
+
+1. 단축어 앱에서 새 단축어 생성
+2. 우측 상단 정보(ⓘ) > **공유 시트에서 표시** 활성화
+3. 수신 유형을 **이미지**로 설정
+4. 동작 추가: **URL**
+   - 값: `https://<서버도메인>/upload`
+5. 동작 추가: **텍스트**
+   - 값: `.env`의 `UPLOAD_TOKEN` 값
+6. 동작 추가: **사전(Dictionary)**
+   - 키: `X-Upload-Token`
+   - 값: 5번 텍스트
+7. 동작 추가: **URL의 내용 가져오기(Get Contents of URL)**
+   - 메서드: `POST`
+   - 요청 본문: `폼(Form)`
+   - 폼 필드 추가
+     - 키: `file`
+     - 타입: `파일(File)`
+     - 값: 단축어 입력(공유로 받은 이미지)
+   - 헤더: 6번 Dictionary 지정
+8. 동작 추가: **빠른 보기(Quick Look)** 또는 **결과 보기**
+   - 서버 JSON 응답(`items_preview`, `sheet`) 확인
+
+팁:
+- 서버가 사설망에 있다면 iPhone에서 같은 네트워크/VPN에 연결되어야 합니다.
+- 보안을 위해 `UPLOAD_TOKEN`은 길고 추측 어려운 문자열로 설정하세요.

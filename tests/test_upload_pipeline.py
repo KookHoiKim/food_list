@@ -22,12 +22,24 @@ def _build_test_client() -> TestClient:
     return TestClient(app)
 
 
-def test_upload_runs_full_pipeline(monkeypatch) -> None:
-    monkeypatch.setattr(
-        routes,
-        "get_settings",
-        lambda: SimpleNamespace(spreadsheet_id="sheet-123", sheet_name="Fridge"),
+def _mock_settings() -> SimpleNamespace:
+    return SimpleNamespace(spreadsheet_id="sheet-123", sheet_name="Fridge", upload_token="secret-token")
+
+
+def test_upload_requires_token(monkeypatch) -> None:
+    monkeypatch.setattr(routes, "get_settings", _mock_settings)
+
+    client = _build_test_client()
+    response = client.post(
+        "/upload",
+        files={"file": ("sample.jpg", b"\xff\xd8\xffdummy", "image/jpeg")},
     )
+
+    assert response.status_code == 401
+
+
+def test_upload_runs_full_pipeline(monkeypatch) -> None:
+    monkeypatch.setattr(routes, "get_settings", _mock_settings)
     monkeypatch.setattr(routes, "calculate_image_hash", lambda _: "abc123")
     monkeypatch.setattr(routes, "is_hash_processed", lambda _: False)
     monkeypatch.setattr(routes, "save_upload", lambda **_: None)
@@ -51,6 +63,7 @@ def test_upload_runs_full_pipeline(monkeypatch) -> None:
     client = _build_test_client()
     response = client.post(
         "/upload",
+        headers={"X-Upload-Token": "secret-token"},
         files={"file": ("sample.jpg", b"\xff\xd8\xffdummy", "image/jpeg")},
     )
 
@@ -65,11 +78,7 @@ def test_upload_runs_full_pipeline(monkeypatch) -> None:
 
 
 def test_upload_duplicate_skips_pipeline(monkeypatch) -> None:
-    monkeypatch.setattr(
-        routes,
-        "get_settings",
-        lambda: SimpleNamespace(spreadsheet_id="sheet-123", sheet_name="Fridge"),
-    )
+    monkeypatch.setattr(routes, "get_settings", _mock_settings)
     monkeypatch.setattr(routes, "calculate_image_hash", lambda _: "dup-hash")
     monkeypatch.setattr(routes, "is_hash_processed", lambda _: True)
 
@@ -81,6 +90,7 @@ def test_upload_duplicate_skips_pipeline(monkeypatch) -> None:
     client = _build_test_client()
     response = client.post(
         "/upload",
+        headers={"X-Upload-Token": "secret-token"},
         files={"file": ("sample.jpg", b"\xff\xd8\xffdummy", "image/jpeg")},
     )
 
@@ -93,11 +103,7 @@ def test_upload_duplicate_skips_pipeline(monkeypatch) -> None:
 
 
 def test_upload_returns_stage_on_gemini_failure(monkeypatch) -> None:
-    monkeypatch.setattr(
-        routes,
-        "get_settings",
-        lambda: SimpleNamespace(spreadsheet_id="sheet-123", sheet_name="Fridge"),
-    )
+    monkeypatch.setattr(routes, "get_settings", _mock_settings)
     monkeypatch.setattr(routes, "calculate_image_hash", lambda _: "abc123")
     monkeypatch.setattr(routes, "is_hash_processed", lambda _: False)
     monkeypatch.setattr(routes, "save_upload", lambda **_: None)
@@ -110,6 +116,7 @@ def test_upload_returns_stage_on_gemini_failure(monkeypatch) -> None:
     client = _build_test_client()
     response = client.post(
         "/upload",
+        headers={"X-Upload-Token": "secret-token"},
         files={"file": ("sample.jpg", b"\xff\xd8\xffdummy", "image/jpeg")},
     )
 
@@ -117,3 +124,12 @@ def test_upload_returns_stage_on_gemini_failure(monkeypatch) -> None:
     body = response.json()
     assert body["stage"] == "gemini_extract"
     assert "processing_seconds" in body
+
+
+def test_web_page_served() -> None:
+    client = _build_test_client()
+    response = client.get("/web")
+
+    assert response.status_code == 200
+    assert "이미지 업로드" in response.text
+    assert "X-Upload-Token" in response.text
