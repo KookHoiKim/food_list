@@ -9,3 +9,4 @@ google-auth==2.35.0
 python-multipart==0.0.9
 pytest==8.3.3
 apscheduler==3.10.4
+Pillow==10.4.0
