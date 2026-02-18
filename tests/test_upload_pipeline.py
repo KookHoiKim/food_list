@@ -9,12 +9,16 @@ from app.services.gemini_client import Item
 
 
 class _FakeSheetsClient:
-    def __init__(self) -> None:
+    def __init__(self, rows=None) -> None:
         self.appended_rows = []
+        self.rows = list(rows or [])
 
     def append_rows(self, rows):
         self.appended_rows = list(rows)
         return len(self.appended_rows)
+
+    def list_rows(self):
+        return list(self.rows)
 
 
 def _build_test_client() -> TestClient:
@@ -275,3 +279,64 @@ def test_upload_accepts_null_qty_unit(monkeypatch) -> None:
     assert body["items_preview"][0]["unit"] is None
     assert fake_sheets.appended_rows[0]["qty"] is None
     assert fake_sheets.appended_rows[0]["unit"] is None
+
+
+def test_get_items_filters_and_sorts(monkeypatch) -> None:
+    _reset_metrics()
+    rows = [
+        {
+            "id": "1",
+            "name_raw": "우유 1L",
+            "name_norm": "우유",
+            "storage": "냉장",
+            "status": "active",
+            "purchase_date": "2025-01-10",
+            "expiry_estimated": "2025-01-15",
+        },
+        {
+            "id": "2",
+            "name_raw": "양파",
+            "name_norm": "양파",
+            "storage": "실온",
+            "status": "active",
+            "purchase_date": "2025-01-05",
+            "expiry_estimated": "",
+        },
+        {
+            "id": "3",
+            "name_raw": "김치",
+            "name_norm": "김치",
+            "storage": "냉장",
+            "status": "done",
+            "purchase_date": "2025-01-01",
+            "expiry_estimated": "2025-01-02",
+        },
+    ]
+    fake_sheets = _FakeSheetsClient(rows=rows)
+    monkeypatch.setattr(routes, "SheetsClient", lambda: fake_sheets)
+
+    client = _build_test_client()
+    response = client.get("/items", params={"storage": "냉장", "q": "우유"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["items"][0]["id"] == "1"
+
+
+def test_get_items_default_status_active(monkeypatch) -> None:
+    _reset_metrics()
+    rows = [
+        {"id": "1", "status": "active", "name_raw": "a", "name_norm": "a", "purchase_date": "2025-01-02"},
+        {"id": "2", "status": "done", "name_raw": "b", "name_norm": "b", "purchase_date": "2025-01-01"},
+    ]
+    fake_sheets = _FakeSheetsClient(rows=rows)
+    monkeypatch.setattr(routes, "SheetsClient", lambda: fake_sheets)
+
+    client = _build_test_client()
+    response = client.get("/items")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["items"][0]["id"] == "1"
