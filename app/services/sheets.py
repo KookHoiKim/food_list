@@ -5,19 +5,19 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
 from app.core.config import get_settings
-from app.models.inventory import InventoryExtraction
+from app.services.gemini_client import Item
 
 logger = logging.getLogger(__name__)
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 
-def append_inventory_to_sheet(extraction: InventoryExtraction) -> None:
+def append_inventory_to_sheet(extraction: list[Item]) -> None:
     settings = get_settings()
     credentials_info = json.loads(settings.google_credentials_json)
     credentials = Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
     service = build("sheets", "v4", credentials=credentials)
 
-    values = [[item.name, item.quantity, item.unit] for item in extraction.items]
+    values = [[item.name_raw, item.qty, item.unit] for item in extraction]
     body = {"values": values}
     range_name = f"{settings.sheet_name}!A:C"
 

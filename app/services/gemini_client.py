@@ -58,6 +58,9 @@ def extract_items_from_image(image_bytes: bytes) -> list[Item]:
         raise ValueError("image_bytes must not be empty")
 
     settings = get_settings()
+    if len(image_bytes) > settings.gemini_inline_max_bytes:
+        raise ValueError("Image exceeds inline upload threshold; File API flow is required")
+
     mime_type = _guess_mime_type(image_bytes)
     image_base64 = base64.b64encode(image_bytes).decode("utf-8")
 

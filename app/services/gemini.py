@@ -1,64 +1,12 @@
-import base64
-import json
-import logging
+"""Deprecated Gemini extractor module.
 
-import httpx
+Use app.services.gemini_client.extract_items_from_image as the single extraction path.
+"""
 
-from app.core.config import get_settings
-from app.core.metrics import metrics_tracker
-from app.models.inventory import InventoryExtraction
-from app.utils.schema_validation import validate_inventory_json
-
-logger = logging.getLogger(__name__)
-
-GEMINI_MODEL = "gemini-1.5-flash"
+from app.services.gemini_client import Item, extract_items_from_image
 
 
-def build_prompt() -> str:
-    return (
-        "이미지에서 품목 목록을 추출해 JSON으로만 응답하세요. "
-        "형식: {\"items\":[{\"name\":\"string\",\"quantity\":number,\"unit\":\"string\"}]}"
-    )
-
-
-async def extract_inventory_from_image(image_bytes: bytes, mime_type: str) -> InventoryExtraction:
-    settings = get_settings()
-    if len(image_bytes) > settings.gemini_inline_max_bytes:
-        logger.warning(
-            "Image is %d bytes and exceeds inline threshold %d. TODO: migrate to Gemini File API flow.",
-            len(image_bytes),
-            settings.gemini_inline_max_bytes,
-        )
-        raise ValueError("Image exceeds inline upload threshold; File API flow is required")
-
-    image_base64 = base64.b64encode(image_bytes).decode("utf-8")
-    url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
-        f"?key={settings.gemini_api_key}"
-    )
-    payload = {
-        "contents": [
-            {
-                "parts": [
-                    {"text": build_prompt()},
-                    {"inline_data": {"mime_type": mime_type, "data": image_base64}},
-                ]
-            }
-        ],
-        "generationConfig": {"temperature": 0.0, "response_mime_type": "application/json"},
-    }
-
-    logger.info("Calling Gemini API for extraction")
-    metrics_tracker.record_gemini_call()
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(url, json=payload)
-        response.raise_for_status()
-        body = response.json()
-
-    text_output = body["candidates"][0]["content"]["parts"][0]["text"]
-    parsed = json.loads(text_output)
-    if not validate_inventory_json(parsed):
-        raise ValueError("Gemini response did not match expected schema")
-    extraction = InventoryExtraction.model_validate(parsed)
-    logger.info("Extracted %d inventory items", len(extraction.items))
-    return extraction
+async def extract_inventory_from_image(image_bytes: bytes, mime_type: str) -> list[Item]:
+    """Backward-compatible wrapper around unified gemini_client extractor."""
+    _ = mime_type
+    return extract_items_from_image(image_bytes=image_bytes)

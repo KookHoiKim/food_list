@@ -38,6 +38,34 @@ CREATE TABLE IF NOT EXISTS uploads (
 );
 ```
 
+
+## Gemini 추출 스키마 (단일 경로)
+
+Gemini 추출은 **`app/services/gemini_client.py` 단일 모듈**로 통합되어 있습니다.
+`/upload`는 `extract_items_from_image(...)`만 사용합니다.
+
+응답 스키마(모델 출력)는 JSON 배열입니다.
+
+```json
+[
+  {
+    "name_raw": "string",
+    "qty": 1.0,
+    "unit": "개",
+    "confidence": 0.93
+  },
+  {
+    "name_raw": "우유",
+    "qty": null,
+    "unit": null,
+    "confidence": 0.44
+  }
+]
+```
+
+- `qty`, `unit`은 스크린샷 품질/문맥에 따라 `null` 허용
+- 서버 후처리로 `name_norm`, `category`, `storage`, `default_days`, `expiry_estimated`가 자동 계산
+
 ## API
 
 ### `GET /health`
@@ -92,7 +120,7 @@ curl -X GET "http://127.0.0.1:8000/web"
 - 지원 포맷: `image/jpeg`, `image/png`
 - 업로드 크기 제한: 최대 10MB
 - 인증: 헤더 `X-Upload-Token` 필수 (값은 `.env`의 `UPLOAD_TOKEN`)
-- 처리 단계: `해시/저장 -> Gemini 추출 -> 정규화/카테고리/expiry_estimated 계산 -> Google Sheets append`
+- 처리 단계: `해시/저장 -> Gemini 추출(통합 gemini_client) -> 후처리 필드 사용 -> Google Sheets append`
 - 단계별 처리 시간 로그와 전체 `processing_seconds`를 응답에 포함
 
 #### 업로드 예시
