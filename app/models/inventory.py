@@ -1,3 +1,8 @@
+"""Deprecated inventory schema models.
+
+The unified Gemini extraction schema lives in app.services.gemini_client.Item.
+"""
+
 from pydantic import BaseModel, Field
 
 

@@ -1,11 +1,21 @@
-from app.utils.schema_validation import validate_inventory_json
+import pytest
+from pydantic import ValidationError
+
+from app.services.gemini_client import parse_items_json
 
 
-def test_inventory_schema_validation_success() -> None:
-    payload = {"items": [{"name": "Apple", "quantity": 3, "unit": "ea"}]}
-    assert validate_inventory_json(payload) is True
+def test_unified_schema_accepts_nullable_qty_and_unit() -> None:
+    raw = '[{"name_raw":"양파","qty":null,"unit":null,"confidence":0.5}]'
+
+    items = parse_items_json(raw)
+
+    assert items[0].qty is None
+    assert items[0].unit is None
+    assert items[0].name_norm
 
 
-def test_inventory_schema_validation_failure() -> None:
-    payload = {"items": [{"name": "", "quantity": 0, "unit": ""}]}
-    assert validate_inventory_json(payload) is False
+def test_unified_schema_rejects_missing_confidence() -> None:
+    raw = '[{"name_raw":"양파","qty":1,"unit":"개"}]'
+
+    with pytest.raises(ValidationError):
+        parse_items_json(raw)

@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.api import routes
 from app.core.metrics import metrics_tracker
-from app.models.inventory import InventoryExtraction, InventoryItem
+from app.services.gemini_client import Item
 
 
 class _FakeSheetsClient:
@@ -24,13 +24,17 @@ def _build_test_client() -> TestClient:
 
 
 def _mock_settings() -> SimpleNamespace:
-    return SimpleNamespace(spreadsheet_id="sheet-123", sheet_name="Fridge", upload_token="secret-token")
-
-
+    return SimpleNamespace(
+        spreadsheet_id="sheet-123",
+        sheet_name="Fridge",
+        upload_token="secret-token",
+        gemini_inline_max_bytes=4 * 1024 * 1024,
+    )
 
 
 def _reset_metrics() -> None:
     metrics_tracker.reset()
+
 
 def test_upload_requires_token(monkeypatch) -> None:
     _reset_metrics()
@@ -52,19 +56,16 @@ def test_upload_runs_full_pipeline(monkeypatch) -> None:
     monkeypatch.setattr(routes, "is_hash_processed", lambda _: False)
     monkeypatch.setattr(routes, "save_upload", lambda **_: None)
 
-    extraction = InventoryExtraction(
-        items=[
-            InventoryItem(name="우유 1L", quantity=1, unit="개"),
-            InventoryItem(name="양파", quantity=2, unit="개"),
-        ]
-    )
+    extraction = [
+        Item(name_raw="우유 1L", qty=1, unit="개", confidence=0.9),
+        Item(name_raw="양파", qty=2, unit="개", confidence=0.8),
+    ]
 
-    async def _fake_extract_inventory_from_image(*, image_bytes: bytes, mime_type: str):
+    def _fake_extract_items_from_image(*, image_bytes: bytes):
         assert image_bytes
-        assert mime_type == "image/jpeg"
         return extraction
 
-    monkeypatch.setattr(routes, "extract_inventory_from_image", _fake_extract_inventory_from_image)
+    monkeypatch.setattr(routes, "extract_items_from_image", _fake_extract_items_from_image)
     fake_sheets = _FakeSheetsClient()
     monkeypatch.setattr(routes, "SheetsClient", lambda: fake_sheets)
 
@@ -82,6 +83,7 @@ def test_upload_runs_full_pipeline(monkeypatch) -> None:
     assert body["num_rows_appended"] == 2
     assert body["sheet"] == {"spreadsheet_id": "sheet-123", "sheet_name": "Fridge"}
     assert len(body["items_preview"]) == 2
+    assert "confidence" in body["items_preview"][0]
     assert "processing_seconds" in body
 
 
@@ -104,10 +106,10 @@ def test_upload_duplicate_skips_pipeline(monkeypatch) -> None:
 
     monkeypatch.setattr(routes, "save_upload", _save_upload)
 
-    async def _should_not_call(*args, **kwargs):
+    def _should_not_call(*args, **kwargs):
         raise AssertionError("Gemini should not be called for duplicates")
 
-    monkeypatch.setattr(routes, "extract_inventory_from_image", _should_not_call)
+    monkeypatch.setattr(routes, "extract_items_from_image", _should_not_call)
 
     client = _build_test_client()
     response = client.post(
@@ -133,10 +135,10 @@ def test_upload_returns_stage_on_gemini_failure(monkeypatch) -> None:
     monkeypatch.setattr(routes, "is_hash_processed", lambda _: False)
     monkeypatch.setattr(routes, "save_upload", lambda **_: None)
 
-    async def _raise_extract_error(*, image_bytes: bytes, mime_type: str):
+    def _raise_extract_error(*, image_bytes: bytes):
         raise RuntimeError("gemini unavailable")
 
-    monkeypatch.setattr(routes, "extract_inventory_from_image", _raise_extract_error)
+    monkeypatch.setattr(routes, "extract_items_from_image", _raise_extract_error)
 
     client = _build_test_client()
     response = client.post(
@@ -168,12 +170,12 @@ def test_metrics_endpoint_reports_counts(monkeypatch) -> None:
     monkeypatch.setattr(routes, "is_hash_processed", lambda _: False)
     monkeypatch.setattr(routes, "save_upload", lambda **_: None)
 
-    extraction = InventoryExtraction(items=[InventoryItem(name="우유", quantity=1, unit="개")])
+    extraction = [Item(name_raw="우유", qty=1, unit="개", confidence=0.8)]
 
-    async def _fake_extract_inventory_from_image(*, image_bytes: bytes, mime_type: str):
+    def _fake_extract_items_from_image(*, image_bytes: bytes):
         return extraction
 
-    monkeypatch.setattr(routes, "extract_inventory_from_image", _fake_extract_inventory_from_image)
+    monkeypatch.setattr(routes, "extract_items_from_image", _fake_extract_items_from_image)
     fake_sheets = _FakeSheetsClient()
     monkeypatch.setattr(routes, "SheetsClient", lambda: fake_sheets)
 
@@ -191,16 +193,21 @@ def test_metrics_endpoint_reports_counts(monkeypatch) -> None:
     assert metrics["total_uploads"] == 1
     assert metrics["duplicates"] == 0
     assert metrics["sheets_append_success"] == 1
+    assert metrics["gemini_calls"] == 1
 
 
 def test_upload_large_image_skips_gemini_call(monkeypatch) -> None:
     _reset_metrics()
-    monkeypatch.setattr(routes, "get_settings", lambda: SimpleNamespace(
-        spreadsheet_id="sheet-123",
-        sheet_name="Fridge",
-        upload_token="secret-token",
-        gemini_inline_max_bytes=4,
-    ))
+    monkeypatch.setattr(
+        routes,
+        "get_settings",
+        lambda: SimpleNamespace(
+            spreadsheet_id="sheet-123",
+            sheet_name="Fridge",
+            upload_token="secret-token",
+            gemini_inline_max_bytes=4,
+        ),
+    )
     monkeypatch.setattr(routes, "calculate_image_hash", lambda _: "abc123")
     monkeypatch.setattr(routes, "is_hash_processed", lambda _: False)
     monkeypatch.setattr(routes, "save_upload", lambda **_: None)
@@ -217,3 +224,31 @@ def test_upload_large_image_skips_gemini_call(monkeypatch) -> None:
     assert body["stage"] == "gemini_extract"
     metrics = client.get("/metrics").json()
     assert metrics["gemini_calls"] == 0
+
+
+def test_upload_accepts_null_qty_unit(monkeypatch) -> None:
+    _reset_metrics()
+    monkeypatch.setattr(routes, "get_settings", _mock_settings)
+    monkeypatch.setattr(routes, "calculate_image_hash", lambda _: "abc123")
+    monkeypatch.setattr(routes, "is_hash_processed", lambda _: False)
+    monkeypatch.setattr(routes, "save_upload", lambda **_: None)
+
+    extraction = [Item(name_raw="두부", qty=None, unit=None, confidence=0.45)]
+
+    monkeypatch.setattr(routes, "extract_items_from_image", lambda *, image_bytes: extraction)
+    fake_sheets = _FakeSheetsClient()
+    monkeypatch.setattr(routes, "SheetsClient", lambda: fake_sheets)
+
+    client = _build_test_client()
+    response = client.post(
+        "/upload",
+        headers={"X-Upload-Token": "secret-token"},
+        files={"file": ("sample.jpg", b"\xff\xd8\xffdummy", "image/jpeg")},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["items_preview"][0]["qty"] is None
+    assert body["items_preview"][0]["unit"] is None
+    assert fake_sheets.appended_rows[0]["qty"] is None
+    assert fake_sheets.appended_rows[0]["unit"] is None

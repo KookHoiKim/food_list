@@ -10,8 +10,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from app.core.config import get_settings
 from app.core.metrics import metrics_tracker
 from app.db.cache import is_hash_processed, save_upload
-from app.services.gemini import extract_inventory_from_image
-from app.services.normalize import categorize_item, estimate_expiry, normalize_name
+from app.services.gemini_client import extract_items_from_image
 from app.services.sheets_client import SheetsClient
 from app.utils.hash_utils import calculate_image_hash
 
@@ -201,33 +200,29 @@ async def upload_inventory_image(
 
         gemini_started = time.perf_counter()
         try:
-            extraction = await extract_inventory_from_image(image_bytes=image_bytes, mime_type=file.content_type)
+            extraction = extract_items_from_image(image_bytes=image_bytes)
+            metrics_tracker.record_gemini_call()
         except Exception as exc:  # noqa: BLE001
             raise PipelineStageError(stage="gemini_extract", status_code=502, message=str(exc)) from exc
         logger.info("[stage=gemini_extract] done in %.3fs", time.perf_counter() - gemini_started)
 
         normalize_started = time.perf_counter()
         try:
-            purchase_date = datetime.now().date()
             rows_to_append: list[dict[str, object]] = []
             preview: list[dict[str, object]] = []
-            for item in extraction.items:
-                name_norm = normalize_name(item.name)
-                category, storage, default_days = categorize_item(item.name, name_norm)
-                expiry_estimated = estimate_expiry(purchase_date, default_days)
-
+            for item in extraction:
                 row = {
                     "id": str(uuid4()),
                     "added_at": datetime.now().isoformat(timespec="seconds"),
-                    "purchase_date": purchase_date,
-                    "name_raw": item.name,
-                    "name_norm": name_norm,
-                    "qty": item.quantity,
+                    "purchase_date": item.purchase_date,
+                    "name_raw": item.name_raw,
+                    "name_norm": item.name_norm,
+                    "qty": item.qty,
                     "unit": item.unit,
-                    "storage": storage,
-                    "category": category,
-                    "default_days": default_days,
-                    "expiry_estimated": expiry_estimated,
+                    "storage": item.storage,
+                    "category": item.category,
+                    "default_days": item.default_days,
+                    "expiry_estimated": item.expiry_estimated,
                     "expiry_override": "",
                     "status": "active",
                     "source": "gemini",
@@ -239,13 +234,14 @@ async def upload_inventory_image(
                 if len(preview) < 5:
                     preview.append(
                         {
-                            "name_raw": item.name,
-                            "name_norm": name_norm,
-                            "qty": item.quantity,
+                            "name_raw": item.name_raw,
+                            "name_norm": item.name_norm,
+                            "qty": item.qty,
                             "unit": item.unit,
-                            "category": category,
-                            "storage": storage,
-                            "expiry_estimated": expiry_estimated.isoformat(),
+                            "confidence": item.confidence,
+                            "category": item.category,
+                            "storage": item.storage,
+                            "expiry_estimated": item.expiry_estimated.isoformat() if item.expiry_estimated else None,
                         }
                     )
         except Exception as exc:  # noqa: BLE001
@@ -266,7 +262,7 @@ async def upload_inventory_image(
         metrics_tracker.record_upload(processing_seconds=elapsed, duplicate=False)
         return {
             "duplicate": False,
-            "num_items_extracted": len(extraction.items),
+            "num_items_extracted": len(extraction),
             "num_rows_appended": num_rows_appended,
             "sheet": {
                 "spreadsheet_id": settings.spreadsheet_id,
