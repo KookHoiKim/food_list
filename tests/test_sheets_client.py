@@ -1,6 +1,12 @@
 from datetime import date
 
-from app.services.sheets_client import HEADER_COLUMNS, SheetsClient, _to_sheet_value
+from app.services.sheets_client import (
+    HEADER_COLUMNS,
+    RowNotFoundError,
+    SheetsClient,
+    _column_letter_from_index,
+    _to_sheet_value,
+)
 
 
 class _FakeRequest:
@@ -153,3 +159,67 @@ def test_list_rows_empty_header_returns_empty(monkeypatch):
     )
 
     assert client.list_rows() == []
+
+
+def test_update_row_by_id_updates_only_selected_columns(monkeypatch):
+    fake_service = _FakeService(get_responses=[{"values": [["item-1", "item-2"]]}])
+    monkeypatch.setattr(SheetsClient, "_build_service", lambda self: fake_service)
+
+    client = SheetsClient(
+        spreadsheet_id="sheet-id",
+        sheet_name="Fridge",
+        credentials_json='{"type": "service_account"}',
+    )
+
+    client.update_row_by_id(
+        "item-2",
+        {"status": "used", "expiry_override": "2025-01-31", "note": "opened", "ignored": "x"},
+    )
+
+    assert len(fake_service.values_api.update_calls) == 3
+    ranges = [call["range"] for call in fake_service.values_api.update_calls]
+    assert "Fridge!M3" in ranges
+    assert "Fridge!L3" in ranges
+    assert "Fridge!P3" in ranges
+
+
+def test_update_row_by_id_raises_not_found(monkeypatch):
+    fake_service = _FakeService(get_responses=[{"values": [["item-1"]]}])
+    monkeypatch.setattr(SheetsClient, "_build_service", lambda self: fake_service)
+
+    client = SheetsClient(
+        spreadsheet_id="sheet-id",
+        sheet_name="Fridge",
+        credentials_json='{"type": "service_account"}',
+    )
+
+    try:
+        client.update_row_by_id("missing", {"note": "x"})
+    except RowNotFoundError:
+        pass
+    else:
+        raise AssertionError("Expected RowNotFoundError")
+
+
+def test_update_row_by_id_requires_fields(monkeypatch):
+    fake_service = _FakeService(get_responses=[{"values": [["item-1"]]}])
+    monkeypatch.setattr(SheetsClient, "_build_service", lambda self: fake_service)
+
+    client = SheetsClient(
+        spreadsheet_id="sheet-id",
+        sheet_name="Fridge",
+        credentials_json='{"type": "service_account"}',
+    )
+
+    try:
+        client.update_row_by_id("item-1", {"unknown": "x"})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Expected ValueError")
+
+
+def test_column_letter_from_index():
+    assert _column_letter_from_index(0) == "A"
+    assert _column_letter_from_index(15) == "P"
+    assert _column_letter_from_index(26) == "AA"

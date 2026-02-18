@@ -6,13 +6,14 @@ from uuid import uuid4
 
 from fastapi import APIRouter, File, Header, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel, field_validator
 
 from app.core.config import get_settings
 from app.core.metrics import metrics_tracker
 from app.db.cache import is_hash_processed, save_upload
 from app.services.gemini_client import extract_items_from_image
 from app.services.image_preprocess import preprocess_for_gemini
-from app.services.sheets_client import SheetsClient
+from app.services.sheets_client import RowNotFoundError, SheetsClient
 from app.utils.hash_utils import calculate_image_hash
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,42 @@ MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024
 SUPPORTED_CONTENT_TYPES = {"image/jpeg", "image/png"}
 UPLOAD_DIR = Path("./data/uploads")
 EXTENSION_BY_CONTENT_TYPE = {"image/jpeg": ".jpg", "image/png": ".png"}
+
+
+
+ITEM_STATUS_VALUES = {"active", "used", "removed", "discarded"}
+
+
+class ItemPatchRequest(BaseModel):
+    status: str | None = None
+    expiry_override: str | None = None
+    note: str | None = None
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if normalized not in ITEM_STATUS_VALUES:
+            raise ValueError(f"status must be one of: {', '.join(sorted(ITEM_STATUS_VALUES))}")
+        return normalized
+
+    @field_validator("expiry_override")
+    @classmethod
+    def validate_expiry_override(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        normalized = value.strip()
+        if normalized == "":
+            return ""
+
+        try:
+            datetime.strptime(normalized, "%Y-%m-%d")
+        except ValueError as exc:
+            raise ValueError("expiry_override must be YYYY-MM-DD or empty string") from exc
+        return normalized
 
 
 class PipelineStageError(Exception):
@@ -148,6 +185,21 @@ def _sort_key_for_item(item: dict[str, object]) -> tuple[str, str]:
     if purchase_date:
         return (purchase_date, purchase_date)
     return ("9999-12-31", "9999-12-31")
+
+
+@router.patch("/items/{item_id}")
+def patch_item(item_id: str, payload: ItemPatchRequest) -> dict[str, object]:
+    patch = payload.model_dump(exclude_unset=True)
+    if not patch:
+        raise HTTPException(status_code=400, detail="At least one field is required")
+
+    sheets_client = SheetsClient()
+    try:
+        sheets_client.update_row_by_id(item_id, patch)
+    except RowNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return {"ok": True, "id": item_id, "updated_fields": sorted(patch.keys())}
 
 
 @router.get("/items")

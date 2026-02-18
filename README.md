@@ -246,6 +246,31 @@ client.append_rows(rows)
 - `append_rows(...)`: `values.append` + `valueInputOption=USER_ENTERED`로 전달된 행을 그대로 추가합니다.
   같은 업로드(`source_hash`)에서 여러 품목이 추출되면 모두 append됩니다.
 
+
+### 품목 수정/정리 API
+
+기존 행을 수동으로 수정하지 않고 서버 API로 상태/메모/유통기한 오버라이드를 갱신할 수 있습니다.
+
+- 엔드포인트: `PATCH /items/{id}`
+- 본문(JSON, 모두 optional):
+  - `status`: `active | used | removed | discarded`
+  - `expiry_override`: `YYYY-MM-DD` 또는 `""`(빈 문자열, 값 초기화)
+  - `note`: 문자열
+- 동작: `id` 컬럼에서 대상 행을 찾아 **요청한 필드만** 업데이트
+- 에러: 대상 `id`가 없으면 `404`
+
+예시:
+
+```bash
+curl -X PATCH "http://localhost:8000/items/item-001" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "used",
+    "expiry_override": "",
+    "note": "2025-01-15 사용완료"
+  }'
+```
+
 ## iOS 단축어: 공유 → 서버 업로드 구성 방법
 
 아래 순서로 iPhone 기본 **단축어(Shortcuts)** 앱에서 구성하면, 사진 공유 시 서버로 바로 업로드할 수 있습니다.
