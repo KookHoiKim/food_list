@@ -31,7 +31,13 @@ def on_startup() -> None:
     init_db()
     cleanup_old_uploads()
     if scheduler:
-        scheduler.add_job(cleanup_old_uploads, "interval", days=1, id="image-retention-cleanup", replace_existing=True)
+        scheduler.add_job(
+            cleanup_old_uploads,
+            "interval",
+            days=1,
+            id="image-retention-cleanup",
+            replace_existing=True,
+        )
         scheduler.start()
     logger.info("Application started and database initialized")
 

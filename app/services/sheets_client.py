@@ -1,7 +1,8 @@
 import json
 import logging
+from collections.abc import Iterable
 from datetime import date, datetime
-from typing import Any, Iterable
+from typing import Any
 
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import Resource, build
@@ -112,7 +113,9 @@ class SheetsClient:
             )
             .execute()
         )
-        logger.info("Appended %d row(s) to sheet without source_hash deduplication", len(prepared_rows))
+        logger.info(
+            "Appended %d row(s) to sheet without source_hash deduplication", len(prepared_rows)
+        )
         return len(prepared_rows)
 
     def list_rows(self) -> list[dict[str, Any]]:
@@ -211,7 +214,6 @@ class SheetsClient:
         return build("sheets", "v4", credentials=credentials)
 
 
-
 def _parse_credentials_json(credentials_json: str) -> dict[str, Any]:
     raw = credentials_json.strip()
     if raw.startswith("{"):
@@ -219,7 +221,6 @@ def _parse_credentials_json(credentials_json: str) -> dict[str, Any]:
 
     with open(raw, encoding="utf-8") as fp:
         return json.load(fp)
-
 
 
 def _to_sheet_value(value: Any) -> Any:

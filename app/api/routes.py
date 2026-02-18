@@ -25,7 +25,6 @@ UPLOAD_DIR = Path("./data/uploads")
 EXTENSION_BY_CONTENT_TYPE = {"image/jpeg": ".jpg", "image/png": ".png"}
 
 
-
 ITEM_STATUS_VALUES = {"active", "used", "removed", "discarded"}
 
 
@@ -175,8 +174,6 @@ def _validate_upload_token(x_upload_token: str | None, expected_token: str) -> N
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
-
-
 def _sort_key_for_item(item: dict[str, object]) -> tuple[str, str]:
     expiry_estimated = str(item.get("expiry_estimated") or "").strip()
     purchase_date = str(item.get("purchase_date") or "").strip()
@@ -213,10 +210,16 @@ def list_items(
 
     filtered = rows
     if status:
-        filtered = [row for row in filtered if str(row.get("status", "")).strip().lower() == status.lower()]
+        filtered = [
+            row for row in filtered if str(row.get("status", "")).strip().lower() == status.lower()
+        ]
 
     if storage:
-        filtered = [row for row in filtered if str(row.get("storage", "")).strip().lower() == storage.lower()]
+        filtered = [
+            row
+            for row in filtered
+            if str(row.get("storage", "")).strip().lower() == storage.lower()
+        ]
 
     if q:
         query = q.lower()
@@ -253,14 +256,18 @@ async def upload_inventory_image(
         image_bytes = await file.read()
         file_size = len(image_bytes)
         if file_size == 0:
-            raise PipelineStageError(stage="validate_input", status_code=400, message="Uploaded file is empty")
+            raise PipelineStageError(
+                stage="validate_input", status_code=400, message="Uploaded file is empty"
+            )
         if file_size > MAX_UPLOAD_SIZE_BYTES:
             raise PipelineStageError(
                 stage="validate_input",
                 status_code=413,
                 message="File size exceeds limit (10MB)",
             )
-        logger.info("[stage=validate_input] done in %.3fs", time.perf_counter() - validation_started)
+        logger.info(
+            "[stage=validate_input] done in %.3fs", time.perf_counter() - validation_started
+        )
 
         hash_started = time.perf_counter()
         try:
@@ -272,9 +279,13 @@ async def upload_inventory_image(
                 extension = EXTENSION_BY_CONTENT_TYPE.get(file.content_type, ".jpg")
                 destination = UPLOAD_DIR / f"{file_hash}{extension}"
                 destination.write_bytes(image_bytes)
-                save_upload(file_hash=file_hash, original_filename=file.filename, size_bytes=file_size)
+                save_upload(
+                    file_hash=file_hash, original_filename=file.filename, size_bytes=file_size
+                )
         except Exception as exc:  # noqa: BLE001
-            raise PipelineStageError(stage="hash_and_save", status_code=500, message=str(exc)) from exc
+            raise PipelineStageError(
+                stage="hash_and_save", status_code=500, message=str(exc)
+            ) from exc
         logger.info("[stage=hash_and_save] done in %.3fs", time.perf_counter() - hash_started)
 
         if is_duplicate:
@@ -314,14 +325,18 @@ async def upload_inventory_image(
                 gemini_content_type,
             )
         except Exception as exc:  # noqa: BLE001
-            raise PipelineStageError(stage="preprocess_image", status_code=500, message=str(exc)) from exc
+            raise PipelineStageError(
+                stage="preprocess_image", status_code=500, message=str(exc)
+            ) from exc
 
         gemini_started = time.perf_counter()
         try:
             extraction = extract_items_from_image(image_bytes=gemini_image_bytes)
             metrics_tracker.record_gemini_call()
         except Exception as exc:  # noqa: BLE001
-            raise PipelineStageError(stage="gemini_extract", status_code=502, message=str(exc)) from exc
+            raise PipelineStageError(
+                stage="gemini_extract", status_code=502, message=str(exc)
+            ) from exc
         logger.info("[stage=gemini_extract] done in %.3fs", time.perf_counter() - gemini_started)
 
         normalize_started = time.perf_counter()
@@ -359,12 +374,18 @@ async def upload_inventory_image(
                             "confidence": item.confidence,
                             "category": item.category,
                             "storage": item.storage,
-                            "expiry_estimated": item.expiry_estimated.isoformat() if item.expiry_estimated else None,
+                            "expiry_estimated": (
+                                item.expiry_estimated.isoformat() if item.expiry_estimated else None
+                            ),
                         }
                     )
         except Exception as exc:  # noqa: BLE001
-            raise PipelineStageError(stage="normalize_items", status_code=500, message=str(exc)) from exc
-        logger.info("[stage=normalize_items] done in %.3fs", time.perf_counter() - normalize_started)
+            raise PipelineStageError(
+                stage="normalize_items", status_code=500, message=str(exc)
+            ) from exc
+        logger.info(
+            "[stage=normalize_items] done in %.3fs", time.perf_counter() - normalize_started
+        )
 
         sheets_started = time.perf_counter()
         try:
@@ -373,7 +394,9 @@ async def upload_inventory_image(
             metrics_tracker.record_sheets_append(success=True)
         except Exception as exc:  # noqa: BLE001
             metrics_tracker.record_sheets_append(success=False)
-            raise PipelineStageError(stage="append_sheet", status_code=502, message=str(exc)) from exc
+            raise PipelineStageError(
+                stage="append_sheet", status_code=502, message=str(exc)
+            ) from exc
         logger.info("[stage=append_sheet] done in %.3fs", time.perf_counter() - sheets_started)
 
         elapsed = time.perf_counter() - started_at

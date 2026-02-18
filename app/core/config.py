@@ -10,9 +10,7 @@ load_dotenv()
 
 class Settings(BaseSettings):
     gemini_api_key: str = Field(alias="GEMINI_API_KEY")
-    spreadsheet_id: str = Field(
-        validation_alias=AliasChoices("SPREADSHEET_ID", "GOOGLE_SHEET_ID")
-    )
+    spreadsheet_id: str = Field(validation_alias=AliasChoices("SPREADSHEET_ID", "GOOGLE_SHEET_ID"))
     google_credentials_json: str = Field(
         validation_alias=AliasChoices("GOOGLE_CREDENTIALS_JSON", "SERVICE_ACCOUNT_CREDENTIALS_JSON")
     )

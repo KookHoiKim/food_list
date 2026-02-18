@@ -16,7 +16,9 @@ def test_categorize_item_assigns_frozen_defaults() -> None:
 
 
 def test_parse_items_json_applies_expiry_from_purchase_date() -> None:
-    raw = '[{"name_raw":"우유 1L","qty":1,"unit":"개","confidence":0.9,"purchase_date":"2025-01-01"}]'
+    raw = (
+        '[{"name_raw":"우유 1L","qty":1,"unit":"개","confidence":0.9,"purchase_date":"2025-01-01"}]'
+    )
     items = parse_items_json(raw)
 
     assert items[0].name_norm == "우유"

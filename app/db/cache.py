@@ -1,9 +1,9 @@
 import logging
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Iterator
 
 from app.core.config import get_settings
 

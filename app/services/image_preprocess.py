@@ -37,7 +37,9 @@ def preprocess_for_gemini(
         resized = image.copy()
         if resized.width > max_width:
             ratio = max_width / resized.width
-            resized = resized.resize((max_width, int(resized.height * ratio)), Image.Resampling.LANCZOS)
+            resized = resized.resize(
+                (max_width, int(resized.height * ratio)), Image.Resampling.LANCZOS
+            )
 
         for quality in JPEG_QUALITY_STEPS:
             candidate = _encode_jpeg(resized, quality=quality)
@@ -45,15 +47,17 @@ def preprocess_for_gemini(
                 return candidate, "image/jpeg", True
 
     smallest = _encode_jpeg(
-        image.resize(
-            (
-                min(image.width, JPEG_WIDTH_STEPS[-1]),
-                int(image.height * min(image.width, JPEG_WIDTH_STEPS[-1]) / image.width),
-            ),
-            Image.Resampling.LANCZOS,
-        )
-        if image.width > JPEG_WIDTH_STEPS[-1]
-        else image,
+        (
+            image.resize(
+                (
+                    min(image.width, JPEG_WIDTH_STEPS[-1]),
+                    int(image.height * min(image.width, JPEG_WIDTH_STEPS[-1]) / image.width),
+                ),
+                Image.Resampling.LANCZOS,
+            )
+            if image.width > JPEG_WIDTH_STEPS[-1]
+            else image
+        ),
         quality=JPEG_QUALITY_STEPS[-1],
     )
     return smallest, "image/jpeg", True
