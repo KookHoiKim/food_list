@@ -29,7 +29,6 @@ HEADER_COLUMNS = [
     "source_hash",
     "note",
 ]
-SOURCE_HASH_COLUMN_INDEX = HEADER_COLUMNS.index("source_hash")
 
 
 class SheetsClient:
@@ -80,53 +79,20 @@ class SheetsClient:
             .execute()
         )
 
-    def has_hash_recently(self, source_hash: str, lookback_rows: int = 200) -> bool:
-        """Return True if source_hash exists in recent rows."""
-        if not source_hash.strip():
-            return False
-
-        hash_column_letter = _column_letter(SOURCE_HASH_COLUMN_INDEX + 1)
-        hash_range = f"{self.sheet_name}!{hash_column_letter}2:{hash_column_letter}"
-        response = (
-            self._service.spreadsheets()
-            .values()
-            .get(
-                spreadsheetId=self.spreadsheet_id,
-                range=hash_range,
-                majorDimension="COLUMNS",
-            )
-            .execute()
-        )
-        columns = response.get("values", [])
-        hashes = columns[0] if columns else []
-        recent_hashes = [str(value).strip() for value in hashes[-lookback_rows:]]
-        return source_hash.strip() in recent_hashes
-
-    def append_rows(self, rows: Iterable[dict[str, Any]], lookback_rows: int = 200) -> int:
-        """Append rows after header check and recent-hash deduplication.
+    def append_rows(self, rows: Iterable[dict[str, Any]]) -> int:
+        """Append rows after header check.
 
         Returns the number of appended rows.
         """
         self.ensure_header()
 
         prepared_rows: list[list[Any]] = []
-        buffered_hashes: set[str] = set()
 
         for row in rows:
-            source_hash = str(row.get("source_hash", "")).strip()
-            if source_hash:
-                if source_hash in buffered_hashes:
-                    logger.info("Skipping duplicate row in current batch (source_hash=%s)", source_hash)
-                    continue
-                if self.has_hash_recently(source_hash, lookback_rows=lookback_rows):
-                    logger.info("Skipping duplicate row already in sheet (source_hash=%s)", source_hash)
-                    continue
-                buffered_hashes.add(source_hash)
-
             prepared_rows.append([_to_sheet_value(row.get(column)) for column in HEADER_COLUMNS])
 
         if not prepared_rows:
-            logger.info("No rows to append after deduplication")
+            logger.info("No rows to append")
             return 0
 
         (
@@ -141,7 +107,7 @@ class SheetsClient:
             )
             .execute()
         )
-        logger.info("Appended %d row(s) to sheet", len(prepared_rows))
+        logger.info("Appended %d row(s) to sheet without source_hash deduplication", len(prepared_rows))
         return len(prepared_rows)
 
     def _build_service(self) -> Resource:
@@ -167,16 +133,3 @@ def _to_sheet_value(value: Any) -> Any:
     if isinstance(value, (datetime, date)):
         return value.isoformat()
     return value
-
-
-
-def _column_letter(column_index_1_based: int) -> str:
-    if column_index_1_based < 1:
-        raise ValueError("column_index_1_based must be >= 1")
-
-    result = ""
-    index = column_index_1_based
-    while index > 0:
-        index, remainder = divmod(index - 1, 26)
-        result = chr(65 + remainder) + result
-    return result
