@@ -209,14 +209,14 @@ rows = [
     }
 ]
 
-# append 전 최근 N행(source_hash) 중복 확인 후 중복이면 스킵
-client.append_rows(rows, lookback_rows=200)
+# upload 단위 중복은 SQLite(hash PRIMARY KEY)에서 먼저 차단
+client.append_rows(rows)
 ```
 
 - `ensure_header()`: 시트 첫 행이 비어 있으면 자동으로 헤더(`id ... note`)를 작성합니다.
-- `has_hash_recently(source_hash, lookback_rows=200)`: 최근 N행에서 `source_hash` 중복 여부를 확인합니다.
-- `append_rows(...)`: `values.append` + `valueInputOption=USER_ENTERED`로 행을 추가하며,
-  중복 해시는 자동 스킵합니다.
+- 업로드 중복 방지는 SQLite `uploads.hash`(PRIMARY KEY)에서 처리합니다.
+- `append_rows(...)`: `values.append` + `valueInputOption=USER_ENTERED`로 전달된 행을 그대로 추가합니다.
+  같은 업로드(`source_hash`)에서 여러 품목이 추출되면 모두 append됩니다.
 
 ## iOS 단축어: 공유 → 서버 업로드 구성 방법
 

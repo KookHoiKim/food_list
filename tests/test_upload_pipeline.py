@@ -89,7 +89,20 @@ def test_upload_duplicate_skips_pipeline(monkeypatch) -> None:
     _reset_metrics()
     monkeypatch.setattr(routes, "get_settings", _mock_settings)
     monkeypatch.setattr(routes, "calculate_image_hash", lambda _: "dup-hash")
-    monkeypatch.setattr(routes, "is_hash_processed", lambda _: True)
+
+    calls = {"is_hash_processed": 0, "save_upload": 0}
+
+    def _is_hash_processed(file_hash: str) -> bool:
+        calls["is_hash_processed"] += 1
+        assert file_hash == "dup-hash"
+        return True
+
+    monkeypatch.setattr(routes, "is_hash_processed", _is_hash_processed)
+
+    def _save_upload(**kwargs):
+        calls["save_upload"] += 1
+
+    monkeypatch.setattr(routes, "save_upload", _save_upload)
 
     async def _should_not_call(*args, **kwargs):
         raise AssertionError("Gemini should not be called for duplicates")
@@ -109,6 +122,8 @@ def test_upload_duplicate_skips_pipeline(monkeypatch) -> None:
     assert body["num_items_extracted"] == 0
     assert body["num_rows_appended"] == 0
     assert body["items_preview"] == []
+    assert calls["is_hash_processed"] == 1
+    assert calls["save_upload"] == 0
 
 
 def test_upload_returns_stage_on_gemini_failure(monkeypatch) -> None:
