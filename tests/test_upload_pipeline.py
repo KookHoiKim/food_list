@@ -6,12 +6,15 @@ from fastapi.testclient import TestClient
 from app.api import routes
 from app.core.metrics import metrics_tracker
 from app.services.gemini_client import Item
+from app.services.sheets_client import RowNotFoundError
 
 
 class _FakeSheetsClient:
-    def __init__(self, rows=None) -> None:
+    def __init__(self, rows=None, *, not_found_ids=None) -> None:
         self.appended_rows = []
         self.rows = list(rows or [])
+        self.updated_calls = []
+        self.not_found_ids = set(not_found_ids or [])
 
     def append_rows(self, rows):
         self.appended_rows = list(rows)
@@ -19,6 +22,11 @@ class _FakeSheetsClient:
 
     def list_rows(self):
         return list(self.rows)
+
+    def update_row_by_id(self, item_id, patch):
+        if item_id in self.not_found_ids:
+            raise RowNotFoundError(f"Item id '{item_id}' not found")
+        self.updated_calls.append((item_id, patch))
 
 
 def _build_test_client() -> TestClient:
@@ -340,3 +348,72 @@ def test_get_items_default_status_active(monkeypatch) -> None:
     body = response.json()
     assert body["total"] == 1
     assert body["items"][0]["id"] == "1"
+
+
+def test_patch_item_updates_requested_fields(monkeypatch) -> None:
+    _reset_metrics()
+    fake_sheets = _FakeSheetsClient()
+    monkeypatch.setattr(routes, "SheetsClient", lambda: fake_sheets)
+
+    client = _build_test_client()
+    response = client.patch(
+        "/items/item-1",
+        json={"status": "used", "expiry_override": "2025-01-31", "note": "opened"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["id"] == "item-1"
+    assert body["updated_fields"] == ["expiry_override", "note", "status"]
+    assert fake_sheets.updated_calls == [
+        (
+            "item-1",
+            {"status": "used", "expiry_override": "2025-01-31", "note": "opened"},
+        )
+    ]
+
+
+def test_patch_item_rejects_invalid_status(monkeypatch) -> None:
+    _reset_metrics()
+    fake_sheets = _FakeSheetsClient()
+    monkeypatch.setattr(routes, "SheetsClient", lambda: fake_sheets)
+
+    client = _build_test_client()
+    response = client.patch("/items/item-1", json={"status": "done"})
+
+    assert response.status_code == 422
+
+
+def test_patch_item_rejects_invalid_expiry_override(monkeypatch) -> None:
+    _reset_metrics()
+    fake_sheets = _FakeSheetsClient()
+    monkeypatch.setattr(routes, "SheetsClient", lambda: fake_sheets)
+
+    client = _build_test_client()
+    response = client.patch("/items/item-1", json={"expiry_override": "31-01-2025"})
+
+    assert response.status_code == 422
+
+
+def test_patch_item_returns_404_when_not_found(monkeypatch) -> None:
+    _reset_metrics()
+    fake_sheets = _FakeSheetsClient(not_found_ids={"missing-id"})
+    monkeypatch.setattr(routes, "SheetsClient", lambda: fake_sheets)
+
+    client = _build_test_client()
+    response = client.patch("/items/missing-id", json={"note": "not here"})
+
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()
+
+
+def test_patch_item_rejects_empty_payload(monkeypatch) -> None:
+    _reset_metrics()
+    fake_sheets = _FakeSheetsClient()
+    monkeypatch.setattr(routes, "SheetsClient", lambda: fake_sheets)
+
+    client = _build_test_client()
+    response = client.patch("/items/item-1", json={})
+
+    assert response.status_code == 400

@@ -29,6 +29,11 @@ HEADER_COLUMNS = [
     "source_hash",
     "note",
 ]
+UPDATABLE_COLUMNS = ("status", "expiry_override", "note")
+
+
+class RowNotFoundError(Exception):
+    """Raised when a target row cannot be found by id."""
 
 
 class SheetsClient:
@@ -153,6 +158,53 @@ class SheetsClient:
 
         return parsed_rows
 
+    def update_row_by_id(self, item_id: str, patch: dict[str, Any]) -> None:
+        """Update specific columns for a row identified by the id column."""
+        normalized_id = item_id.strip()
+        if not normalized_id:
+            raise ValueError("item_id must not be empty")
+
+        updates = {key: value for key, value in patch.items() if key in UPDATABLE_COLUMNS}
+        if not updates:
+            raise ValueError("patch must include at least one updatable field")
+
+        id_column_response = (
+            self._service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"{self.sheet_name}!A2:A100000",
+                majorDimension="COLUMNS",
+            )
+            .execute()
+        )
+        id_values = id_column_response.get("values", [[]])
+        id_column = id_values[0] if id_values else []
+
+        row_number = None
+        for offset, value in enumerate(id_column, start=2):
+            if str(value).strip() == normalized_id:
+                row_number = offset
+                break
+
+        if row_number is None:
+            raise RowNotFoundError(f"Item id '{item_id}' not found")
+
+        for column_name, value in updates.items():
+            column_index = HEADER_COLUMNS.index(column_name)
+            column_letter = _column_letter_from_index(column_index)
+            (
+                self._service.spreadsheets()
+                .values()
+                .update(
+                    spreadsheetId=self.spreadsheet_id,
+                    range=f"{self.sheet_name}!{column_letter}{row_number}",
+                    valueInputOption="USER_ENTERED",
+                    body={"values": [[_to_sheet_value(value)]]},
+                )
+                .execute()
+            )
+
     def _build_service(self) -> Resource:
         credentials_info = _parse_credentials_json(self._credentials_json)
         credentials = Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
@@ -176,3 +228,15 @@ def _to_sheet_value(value: Any) -> Any:
     if isinstance(value, (datetime, date)):
         return value.isoformat()
     return value
+
+
+def _column_letter_from_index(index: int) -> str:
+    if index < 0:
+        raise ValueError("index must be >= 0")
+
+    result = ""
+    current = index + 1
+    while current:
+        current, remainder = divmod(current - 1, 26)
+        result = chr(65 + remainder) + result
+    return result
