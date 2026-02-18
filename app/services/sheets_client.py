@@ -110,6 +110,49 @@ class SheetsClient:
         logger.info("Appended %d row(s) to sheet without source_hash deduplication", len(prepared_rows))
         return len(prepared_rows)
 
+    def list_rows(self) -> list[dict[str, Any]]:
+        """Read rows from the sheet and return list[dict] keyed by header columns."""
+        header_response = (
+            self._service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"{self.sheet_name}!1:1",
+                majorDimension="ROWS",
+            )
+            .execute()
+        )
+        header_values = header_response.get("values", [])
+        if not header_values:
+            return []
+
+        headers = [str(cell).strip() for cell in header_values[0]]
+        if not any(headers):
+            return []
+
+        rows_response = (
+            self._service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=self.spreadsheet_id,
+                range=f"{self.sheet_name}!2:100000",
+                majorDimension="ROWS",
+            )
+            .execute()
+        )
+        data_rows = rows_response.get("values", [])
+
+        parsed_rows: list[dict[str, Any]] = []
+        for row in data_rows:
+            parsed_row: dict[str, Any] = {}
+            for idx, header in enumerate(headers):
+                if not header:
+                    continue
+                parsed_row[header] = row[idx] if idx < len(row) else ""
+            parsed_rows.append(parsed_row)
+
+        return parsed_rows
+
     def _build_service(self) -> Resource:
         credentials_info = _parse_credentials_json(self._credentials_json)
         credentials = Credentials.from_service_account_info(credentials_info, scopes=SCOPES)

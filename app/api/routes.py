@@ -138,6 +138,48 @@ def _validate_upload_token(x_upload_token: str | None, expected_token: str) -> N
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
+
+
+def _sort_key_for_item(item: dict[str, object]) -> tuple[str, str]:
+    expiry_estimated = str(item.get("expiry_estimated") or "").strip()
+    purchase_date = str(item.get("purchase_date") or "").strip()
+    if expiry_estimated:
+        return (expiry_estimated, purchase_date)
+    if purchase_date:
+        return (purchase_date, purchase_date)
+    return ("9999-12-31", "9999-12-31")
+
+
+@router.get("/items")
+def list_items(
+    status: str = "active",
+    storage: str | None = None,
+    q: str | None = None,
+) -> dict[str, object]:
+    sheets_client = SheetsClient()
+    rows = sheets_client.list_rows()
+
+    filtered = rows
+    if status:
+        filtered = [row for row in filtered if str(row.get("status", "")).strip().lower() == status.lower()]
+
+    if storage:
+        filtered = [row for row in filtered if str(row.get("storage", "")).strip().lower() == storage.lower()]
+
+    if q:
+        query = q.lower()
+        filtered = [
+            row
+            for row in filtered
+            if query in str(row.get("name_raw", "")).lower()
+            or query in str(row.get("name_norm", "")).lower()
+        ]
+
+    filtered.sort(key=_sort_key_for_item)
+
+    return {"items": filtered, "total": len(filtered)}
+
+
 @router.post("/upload")
 async def upload_inventory_image(
     file: UploadFile = File(...),

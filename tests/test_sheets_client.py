@@ -116,3 +116,40 @@ def test_append_rows_keeps_same_source_hash_rows_and_uses_user_entered(monkeypat
 def test_sheet_value_helper():
     assert _to_sheet_value(None) == ""
     assert _to_sheet_value(date(2025, 1, 1)) == "2025-01-01"
+
+
+def test_list_rows_returns_dicts_by_header(monkeypatch):
+    fake_service = _FakeService(
+        get_responses=[
+            {"values": [HEADER_COLUMNS]},
+            {"values": [["1", "2025-01-01T00:00:00", "2025-01-01", "우유", "우유", "1"]]},
+        ]
+    )
+    monkeypatch.setattr(SheetsClient, "_build_service", lambda self: fake_service)
+
+    client = SheetsClient(
+        spreadsheet_id="sheet-id",
+        sheet_name="Fridge",
+        credentials_json='{"type": "service_account"}',
+    )
+
+    rows = client.list_rows()
+
+    assert len(rows) == 1
+    assert rows[0]["id"] == "1"
+    assert rows[0]["name_raw"] == "우유"
+    assert rows[0]["qty"] == "1"
+    assert rows[0]["status"] == ""
+
+
+def test_list_rows_empty_header_returns_empty(monkeypatch):
+    fake_service = _FakeService(get_responses=[{}])
+    monkeypatch.setattr(SheetsClient, "_build_service", lambda self: fake_service)
+
+    client = SheetsClient(
+        spreadsheet_id="sheet-id",
+        sheet_name="Fridge",
+        credentials_json='{"type": "service_account"}',
+    )
+
+    assert client.list_rows() == []
