@@ -29,6 +29,7 @@ def _mock_settings() -> SimpleNamespace:
         sheet_name="Fridge",
         upload_token="secret-token",
         gemini_inline_max_bytes=4 * 1024 * 1024,
+        gemini_preprocess_enabled=True,
     )
 
 
@@ -196,7 +197,7 @@ def test_metrics_endpoint_reports_counts(monkeypatch) -> None:
     assert metrics["gemini_calls"] == 1
 
 
-def test_upload_large_image_skips_gemini_call(monkeypatch) -> None:
+def test_upload_large_image_uses_preprocess_before_gemini(monkeypatch) -> None:
     _reset_metrics()
     monkeypatch.setattr(
         routes,
@@ -206,11 +207,33 @@ def test_upload_large_image_skips_gemini_call(monkeypatch) -> None:
             sheet_name="Fridge",
             upload_token="secret-token",
             gemini_inline_max_bytes=4,
+            gemini_preprocess_enabled=True,
         ),
     )
     monkeypatch.setattr(routes, "calculate_image_hash", lambda _: "abc123")
     monkeypatch.setattr(routes, "is_hash_processed", lambda _: False)
     monkeypatch.setattr(routes, "save_upload", lambda **_: None)
+
+    called = {"preprocess": 0}
+
+    def _fake_preprocess_for_gemini(*, image_bytes: bytes, content_type: str, max_bytes: int):
+        called["preprocess"] += 1
+        assert image_bytes == b"12345"
+        assert content_type == "image/jpeg"
+        assert max_bytes == 4
+        return b"123", "image/jpeg", True
+
+    monkeypatch.setattr(routes, "preprocess_for_gemini", _fake_preprocess_for_gemini)
+
+    monkeypatch.setattr(
+        routes,
+        "extract_items_from_image",
+        lambda *, image_bytes: [Item(name_raw="사과", qty=1, unit="개", confidence=0.8)]
+        if image_bytes == b"123"
+        else [],
+    )
+    fake_sheets = _FakeSheetsClient()
+    monkeypatch.setattr(routes, "SheetsClient", lambda: fake_sheets)
 
     client = _build_test_client()
     response = client.post(
@@ -219,11 +242,11 @@ def test_upload_large_image_skips_gemini_call(monkeypatch) -> None:
         files={"file": ("sample.jpg", b"12345", "image/jpeg")},
     )
 
-    assert response.status_code == 502
-    body = response.json()
-    assert body["stage"] == "gemini_extract"
+    assert response.status_code == 200
+    assert response.json()["num_items_extracted"] == 1
+    assert called["preprocess"] == 1
     metrics = client.get("/metrics").json()
-    assert metrics["gemini_calls"] == 0
+    assert metrics["gemini_calls"] == 1
 
 
 def test_upload_accepts_null_qty_unit(monkeypatch) -> None:

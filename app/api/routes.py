@@ -11,6 +11,7 @@ from app.core.config import get_settings
 from app.core.metrics import metrics_tracker
 from app.db.cache import is_hash_processed, save_upload
 from app.services.gemini_client import extract_items_from_image
+from app.services.image_preprocess import preprocess_for_gemini
 from app.services.sheets_client import SheetsClient
 from app.utils.hash_utils import calculate_image_hash
 
@@ -198,9 +199,32 @@ async def upload_inventory_image(
                 "processing_seconds": round(elapsed, 3),
             }
 
+        preprocess_started = time.perf_counter()
+        gemini_image_bytes = image_bytes
+        gemini_content_type = file.content_type or "image/jpeg"
+        try:
+            if settings.gemini_preprocess_enabled:
+                gemini_image_bytes, gemini_content_type, changed = preprocess_for_gemini(
+                    image_bytes=image_bytes,
+                    content_type=gemini_content_type,
+                    max_bytes=settings.gemini_inline_max_bytes,
+                )
+            else:
+                changed = False
+            logger.info(
+                "[stage=preprocess_image] done in %.3fs (original_size=%d processed_size=%d changed=%s mime=%s)",
+                time.perf_counter() - preprocess_started,
+                len(image_bytes),
+                len(gemini_image_bytes),
+                changed,
+                gemini_content_type,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise PipelineStageError(stage="preprocess_image", status_code=500, message=str(exc)) from exc
+
         gemini_started = time.perf_counter()
         try:
-            extraction = extract_items_from_image(image_bytes=image_bytes)
+            extraction = extract_items_from_image(image_bytes=gemini_image_bytes)
             metrics_tracker.record_gemini_call()
         except Exception as exc:  # noqa: BLE001
             raise PipelineStageError(stage="gemini_extract", status_code=502, message=str(exc)) from exc
