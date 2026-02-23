@@ -240,9 +240,11 @@ def test_upload_large_image_uses_preprocess_before_gemini(monkeypatch) -> None:
     monkeypatch.setattr(
         routes,
         "extract_items_from_image",
-        lambda *, image_bytes: [Item(name_raw="사과", qty=1, unit="개", confidence=0.8)]
-        if image_bytes == b"123"
-        else [],
+        lambda *, image_bytes: (
+            [Item(name_raw="사과", qty=1, unit="개", confidence=0.8)]
+            if image_bytes == b"123"
+            else []
+        ),
     )
     fake_sheets = _FakeSheetsClient()
     monkeypatch.setattr(routes, "SheetsClient", lambda: fake_sheets)
@@ -335,8 +337,20 @@ def test_get_items_filters_and_sorts(monkeypatch) -> None:
 def test_get_items_default_status_active(monkeypatch) -> None:
     _reset_metrics()
     rows = [
-        {"id": "1", "status": "active", "name_raw": "a", "name_norm": "a", "purchase_date": "2025-01-02"},
-        {"id": "2", "status": "done", "name_raw": "b", "name_norm": "b", "purchase_date": "2025-01-01"},
+        {
+            "id": "1",
+            "status": "active",
+            "name_raw": "a",
+            "name_norm": "a",
+            "purchase_date": "2025-01-02",
+        },
+        {
+            "id": "2",
+            "status": "done",
+            "name_raw": "b",
+            "name_norm": "b",
+            "purchase_date": "2025-01-01",
+        },
     ]
     fake_sheets = _FakeSheetsClient(rows=rows)
     monkeypatch.setattr(routes, "SheetsClient", lambda: fake_sheets)

@@ -35,7 +35,6 @@ class MetricsTracker:
             else:
                 self._state.sheets_append_failure += 1
 
-
     def reset(self) -> None:
         with self._lock:
             self._state = _MetricsState()

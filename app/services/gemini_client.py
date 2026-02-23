@@ -26,7 +26,9 @@ class Item(BaseModel):
     category: str = Field(default="other", description="카테고리")
     storage: str = Field(default="실온", description="보관 위치")
     default_days: int = Field(default=7, ge=1, description="기본 보관일")
-    purchase_date: date = Field(default_factory=date.today, description="구매일(서버 처리 시각 기준)")
+    purchase_date: date = Field(
+        default_factory=date.today, description="구매일(서버 처리 시각 기준)"
+    )
     expiry_estimated: date | None = Field(default=None, description="예상 소비기한")
 
     model_config = ConfigDict(extra="forbid")
@@ -135,10 +137,10 @@ def _request_items_json_inline(
                             "스키마:\n"
                             "[\n"
                             "  {\n"
-                            "    \"name_raw\": \"string\",\n"
-                            "    \"qty\": number | null,\n"
-                            "    \"unit\": \"string\" | null,\n"
-                            "    \"confidence\": number\n"
+                            '    "name_raw": "string",\n'
+                            '    "qty": number | null,\n'
+                            '    "unit": "string" | null,\n'
+                            '    "confidence": number\n'
                             "  }\n"
                             "]"
                         )
